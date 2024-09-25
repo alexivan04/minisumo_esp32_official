@@ -104,7 +104,7 @@ size_t spi_transfer_pf(uint8_t bus, uint8_t cs,
  * freertos api wrapper
  */
 
-#define QueueHandle_t xQueueHandle
+// #define QueueHandle_t xQueueHandle
 
 #ifdef __cplusplus
 }
