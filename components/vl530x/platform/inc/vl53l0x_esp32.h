@@ -25,14 +25,14 @@
 #define I2C_MASTER_TX_BUF_DISABLE  0
 #define I2C_MASTER_RX_BUF_DISABLE  0
 #define I2C_TIMEOUT_MS 1000
-#define I2C_MASTER_FREQ_HZ  100000 // 100kHz
+#define I2C_MASTER_FREQ_HZ  400000 // 100kHz
 
 void i2c_master_init();
 VL53L0X_Error VL53L0X_device_initialise(VL53L0X_Dev_t *pDevice, uint8_t new_i2c_addr, uint32_t RangeProfile);
 
 VL53L0X_Error WaitMeasurementDataReady(VL53L0X_Dev_t *pDevice);
 
-VL53L0X_Error VL53L0X_SingleRanging(VL53L0X_Dev_t *pDevice, uint16_t *MeasureData);
+VL53L0X_Error VL53L0X_SingleRanging(VL53L0X_Dev_t *pDevice, VL53L0X_RangingMeasurementData_t *MeasureData);
 VL53L0X_Error VL53L0X_ContinuousRanging(VL53L0X_Dev_t *pDevice, uint16_t *MeasuredData, uint16_t RangeCount, uint16_t *validCount);
 
 void init_xshuts(uint8_t *dist_sensors_xshuts, int cnt);

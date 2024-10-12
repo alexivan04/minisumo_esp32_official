@@ -6,13 +6,6 @@
 #define BYTES_PER_DWORD        4
 #define BYTES_PER_WORD         2
 
-#define I2C_MASTER_SCL_IO      22
-#define I2C_MASTER_SDA_IO      21
-#define I2C_MASTER_NUM         I2C_NUM_0
-#define I2C_MASTER_TX_BUF_DISABLE  0
-#define I2C_MASTER_RX_BUF_DISABLE  0
-#define I2C_TIMEOUT_MS 1000
-
 void i2c_master_init() 
 {
     int i2c_master_port = I2C_NUM_0;
@@ -89,24 +82,16 @@ VL53L0X_Error VL53L0X_device_initialise(VL53L0X_Dev_t *pDevice, uint8_t new_i2c_
 	        VL53L0X_VCSEL_PERIOD_FINAL_RANGE, 14);
     if(Status != VL53L0X_ERROR_NONE) return Status;
 
+    Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING); // Setup in single ranging mode
+
     return Status;
 }
 
-VL53L0X_Error VL53L0X_SingleRanging(VL53L0X_Dev_t *pDevice, uint16_t *MeasuredData) {
+VL53L0X_Error VL53L0X_SingleRanging(VL53L0X_Dev_t *pDevice, VL53L0X_RangingMeasurementData_t *MeasuredData) {
     VL53L0X_Error Status = VL53L0X_ERROR_NONE;
-    VL53L0X_RangingMeasurementData_t RangingMeasurementData;
-    
-    *MeasuredData=0; 
-    Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING); // Setup in single ranging mode
-    if(Status != VL53L0X_ERROR_NONE) return Status;
 
-    Status = VL53L0X_PerformSingleRangingMeasurement(pDevice,
-                &RangingMeasurementData);
-    if (Status == VL53L0X_ERROR_NONE && RangingMeasurementData.RangeStatus == 0) {
-        *MeasuredData = RangingMeasurementData.RangeMilliMeter;
-    } else {
-        Status = VL53L0X_ERROR_RANGE_ERROR;
-    }
+    Status = VL53L0X_PerformSingleRangingMeasurement(pDevice, MeasuredData);
+
     /* for accuracy average several samples
     uint32_t ranging=0;
     uint32_t valid_count=0;

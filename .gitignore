@@ -1,4 +1,5 @@
 /.DS_Store
 /.devcontainer
 /.vscode
-/build
+build
+sdkconfig.old
