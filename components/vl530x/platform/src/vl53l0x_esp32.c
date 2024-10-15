@@ -82,7 +82,7 @@ VL53L0X_Error VL53L0X_device_initialise(VL53L0X_Dev_t *pDevice, uint8_t new_i2c_
 	        VL53L0X_VCSEL_PERIOD_FINAL_RANGE, 14);
     if(Status != VL53L0X_ERROR_NONE) return Status;
 
-    Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING); // Setup in single ranging mode
+    // Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING); // Setup in single ranging mode
 
     return Status;
 }
@@ -90,6 +90,7 @@ VL53L0X_Error VL53L0X_device_initialise(VL53L0X_Dev_t *pDevice, uint8_t new_i2c_
 VL53L0X_Error VL53L0X_SingleRanging(VL53L0X_Dev_t *pDevice, VL53L0X_RangingMeasurementData_t *MeasuredData) {
     VL53L0X_Error Status = VL53L0X_ERROR_NONE;
 
+    Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING); // Setup in single ranging mode
     Status = VL53L0X_PerformSingleRangingMeasurement(pDevice, MeasuredData);
 
     /* for accuracy average several samples
@@ -123,12 +124,7 @@ VL53L0X_Error WaitMeasurementDataReady(VL53L0X_Dev_t *pDevice) {
 
     while (1) {
         Status = VL53L0X_GetMeasurementDataReady(pDevice, &dataReady);
-        if ((dataReady == 0x01) || Status != VL53L0X_ERROR_NONE) {
-            break;
-        }
-
-        if (xTaskGetTickCount() - start_time >= pdMS_TO_TICKS(200)) {
-            Status = VL53L0X_ERROR_TIME_OUT;
+        if ((dataReady == 0x01) || Status != VL53L0X_ERROR_NONE || xTaskGetTickCount() - start_time >= pdMS_TO_TICKS(10)) {
             break;
         }
     }
@@ -159,6 +155,8 @@ VL53L0X_Error WaitStopCompleted(VL53L0X_Dev_t *pDevice) {
 
     return Status; // Return the final status
 }
+
+
 
 VL53L0X_Error VL53L0X_ContinuousRanging(VL53L0X_Dev_t *pDevice, uint16_t *MeasuredData, uint16_t RangeCount, uint16_t *validCount){
     VL53L0X_Error Status = VL53L0X_ERROR_NONE;
