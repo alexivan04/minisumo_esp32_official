@@ -62,6 +62,14 @@ typedef enum
     BACKWARD
 } direction_t;
 
+typedef enum
+{
+    PATROL,
+    ATTACK,
+    IDLE,
+    RETREAT
+} state_t;
+
 // #define ACTIVE_ACCEL
 #define ACTIVE_DEBUG
 // #define ACTIVE_DEBUG_DISTANCE_1
@@ -77,8 +85,11 @@ int dist_sensor_data[DIST_SENSORS_CNT];
 VL53L0X_Dev_t dist_sensors[DIST_SENSORS_CNT];
 SemaphoreHandle_t sensorsMutex;
 SemaphoreHandle_t pidMutex;
+SemaphoreHandle_t stateMutex;
 int pid_output;
 int direction = 0;
+state_t state = IDLE;
+
 
 // SemaphoreHandle_t i2cMutex;
 
@@ -228,24 +239,7 @@ static int setup()
         }
         status = VL53L0X_SetDeviceMode(&dist_sensors[i], VL53L0X_DEVICEMODE_CONTINUOUS_RANGING); 
         vTaskDelay(20 / portTICK_PERIOD_MS);
-        if(status != VL53L0X_ERROR_NONE)
-        {
-            #ifdef ACTIVE_DEBUG
-            ESP_LOGE(MAIN_TAG, "Dist sensor %d mode setting failed", i);
-            ESP_LOGE(MAIN_TAG, "Error: %d", status);
-            #endif
-            return_value = 0;
-        }
-
         status = VL53L0X_StartMeasurement(&dist_sensors[i]);
-        if(status != VL53L0X_ERROR_NONE)
-        {
-            #ifdef ACTIVE_DEBUG
-            ESP_LOGE(MAIN_TAG, "Dist sensor %d measurement start failed", i);
-            ESP_LOGE(MAIN_TAG, "Error: %d", status);
-            #endif
-            return_value = 0;
-        }
         vTaskDelay(20 / portTICK_PERIOD_MS);
     }
 
@@ -353,56 +347,90 @@ static void mode_select()
 
 }
 
-static void group_1_task(void *arg)
+static void sensors_read_task(void *arg)
 {
     VL53L0X_RangingMeasurementData_t measurement;
     int data[7] = {0};
+    int local_line_right = 0, local_line_left = 0, local_line_back = 0;
 
     while(1)
     {
-        for(int i = 1; i < 3; i++)
+        for(int i = 0; i < 7; i++)
         {
             status = VL53L0X_GetRangingMeasurementData(&dist_sensors[i], &measurement);
             if(status == VL53L0X_ERROR_NONE)
             {
                 data[i] = measurement.RangeMilliMeter;
-                ESP_LOGI("sensor1_task", "Sensor %d: %d", i, data[i]);
+                // ESP_LOGI("sensor1_task", "Sensor %d: %d", i, data[i]);
                 data[i] = (data[i] < MIN_RANGE) ? MIN_RANGE : data[i];
                 data[i] = (data[i] > MAX_RANGE) ? MAX_RANGE : data[i];
             }
         }
 
-        if(xSemaphoreTake(sensorsMutex, portMAX_DELAY) == pdTRUE)
+        #ifdef BLACK_FIELD
+        local_line_right = !gpio_get_level(LINE_RIGHT);
+        local_line_left = !gpio_get_level(LINE_LEFT);
+        local_line_back = !gpio_get_level(LINE_BACK);
+        #endif
+
+        #ifndef BLACK_FIELD
+        local_line_right = gpio_get_level(LINE_RIGHT);
+        local_line_left = gpio_get_level(LINE_LEFT);
+        local_line_back = gpio_get_level(LINE_BACK);
+        #endif
+
+        if(xSemaphoreTake(sensorsMutex, 10 / portMAX_DELAY) == pdTRUE)
         {
             memcpy(dist_sensor_data, data, 7 * sizeof(int)); 
+            line_right = local_line_right;
+            line_left = local_line_left;
+            line_back = local_line_back;
             xSemaphoreGive(sensorsMutex);
         }
-        vTaskDelay(20 / portTICK_PERIOD_MS);
+
+        #ifdef ACTIVE_DEBUG_LINE
+        ESP_LOGI(MAIN_TAG, "Line 1: %d, Line 2: %d, Line 3: %d", line_right, line_left, line_back);
+        #endif
+
+        vTaskDelay(10 / portTICK_PERIOD_MS);
         
     }
 }
 
 static void line_sensors_task(void* arg) 
 {
+    int local_line_right = 0, local_line_left = 0, local_line_back = 0;
+    state_t local_state = IDLE;
     while (1) 
     {
-        if(BLACK_FIELD)
+        if(xSemaphoreTake(sensorsMutex, 10 / portMAX_DELAY) == pdTRUE)
         {
-            line_right = !gpio_get_level(LINE_RIGHT);
-            line_left = !gpio_get_level(LINE_LEFT);
-            line_back = !gpio_get_level(LINE_BACK);
-        }
-        else
-        {
-            line_right = gpio_get_level(LINE_RIGHT);
-            line_left = gpio_get_level(LINE_LEFT);
-            line_back = gpio_get_level(LINE_BACK);
+            local_line_right = line_right;
+            local_line_left = line_left;
+            local_line_back = line_back;
+            xSemaphoreGive(sensorsMutex);
         }
 
-        #ifdef ACTIVE_DEBUG_LINE
-        ESP_LOGI(MAIN_TAG, "Line 1: %d, Line 2: %d, Line 3: %d", line_right, line_left, line_back);
-        #endif
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        if(xSemaphoreTake(stateMutex, 10 / portMAX_DELAY) == pdTRUE)
+        {
+            local_state = state;
+            xSemaphoreGive(stateMutex);
+        }
+
+        if(local_line_right && local_line_left && local_line_back)
+            local_state = IDLE;
+
+        else if(local_line_right || local_line_left)
+            local_state = RETREAT;
+
+        else if(local_state != ATTACK && local_state != RETREAT)
+            local_state = PATROL;
+
+        if(xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE)
+        {
+            state = local_state;
+            xSemaphoreGive(stateMutex);
+        }
     }
 }
 
@@ -411,6 +439,8 @@ void mode_turn_center_object_PID(void *pvParameters)
 {
     SensorRange_PID *range = (SensorRange_PID *)pvParameters;
     int local_sensor_data[7] = {0};
+    int local_line_right = 0, local_line_left = 0, local_line_back = 0;
+    state_t local_state = IDLE;
 
     double max_integral = range->max_integral;
     double kp = range->kp;
@@ -424,14 +454,26 @@ void mode_turn_center_object_PID(void *pvParameters)
 
     while(1)
     {
-        if(xSemaphoreTake(sensorsMutex, portMAX_DELAY) == pdTRUE)  // Wait for sensor data
+        if(xSemaphoreTake(sensorsMutex,  10 / portMAX_DELAY) == pdTRUE)  // Wait for sensor data
         {
             memcpy(local_sensor_data, dist_sensor_data, 7 * sizeof(int));
             xSemaphoreGive(sensorsMutex);
         }
 
+        if(xSemaphoreTake(stateMutex, 10 / portMAX_DELAY) == pdTRUE)
+        {
+            local_state = state;
+            xSemaphoreGive(stateMutex);
+        }
+
         // PID control logic
         error = local_sensor_data[1] - local_sensor_data[2];
+        if(error != 0)
+            local_state = ATTACK;
+
+        else 
+            local_state = PATROL;
+
         integral += error;
         derivative = (error - error_prev) * 0.9 + derivative * 0.1;  // Apply smoothing factor
         output = (int)(kp * error + ki * integral + kd * derivative);
@@ -444,12 +486,18 @@ void mode_turn_center_object_PID(void *pvParameters)
             output = BDC_MCPWM_DUTY_TICK_MAX;
 
         else if(output < -BDC_MCPWM_DUTY_TICK_MAX)
-            output = -BDC_MCPWM_DUTY_TICK_MAX
-            ;
-        if(xSemaphoreTake(pidMutex, portMAX_DELAY) == pdTRUE)
+            output = -BDC_MCPWM_DUTY_TICK_MAX;
+
+        if(xSemaphoreTake(pidMutex, 10 / portMAX_DELAY) == pdTRUE)
         {
             pid_output = output;
             xSemaphoreGive(pidMutex);
+        }
+
+        if(xSemaphoreTake(stateMutex, 10 / portMAX_DELAY) == pdTRUE)
+        {
+            state = local_state;
+            xSemaphoreGive(stateMutex);
         }
 
         // if(xSemaphoreTake(pidMutex, portMAX_DELAY) == pdTRUE)
@@ -464,25 +512,52 @@ void mode_turn_center_object_PID(void *pvParameters)
 void motor_controller_callback(TimerHandle_t xTimer)
 {
     int output = 0;
-    if(xSemaphoreTake(pidMutex, portMAX_DELAY) == pdTRUE)
+    state_t local_state = IDLE, prev_state = IDLE;
+    if(xSemaphoreTake(pidMutex, 10 / portMAX_DELAY) == pdTRUE)
     {
         output = pid_output;
         xSemaphoreGive(pidMutex);
     }
 
-    
-    if(output > 0)
+    prev_state = local_state;
+    if(xSemaphoreTake(stateMutex, 10 / portMAX_DELAY) == pdTRUE)
     {
-        bdc_motor_forward(motor1);
-        bdc_motor_brake(motor2);
+        local_state = state;
+        xSemaphoreGive(stateMutex);
     }
-    else
+
+    switch(local_state)
     {
-        output = -output;
-        bdc_motor_forward(motor1);
-        bdc_motor_coast(motor2);
+        case PATROL:
+            bdc_motor_forward(motor1);
+            bdc_motor_forward(motor2);
+            bdc_motor_set_speed(motor1, 0.35 * BDC_MCPWM_DUTY_TICK_MAX);
+            bdc_motor_set_speed(motor2, 0.35 * BDC_MCPWM_DUTY_TICK_MAX);
+            break;
+
+        case ATTACK:
+            bdc_motor_forward(motor1);
+            bdc_motor_forward(motor2);
+            bdc_motor_set_speed(motor1, output);
+            bdc_motor_set_speed(motor2, output);
+            break;
+
+        case RETREAT:
+            bdc_motor_reverse(motor1);
+            bdc_motor_reverse(motor2);
+            bdc_motor_set_speed(motor1, 0.70 * BDC_MCPWM_DUTY_TICK_MAX);
+            bdc_motor_set_speed(motor2, 0.70 * BDC_MCPWM_DUTY_TICK_MAX);
+            break;
+
+        case IDLE:
+            bdc_motor_brake(motor1);
+            bdc_motor_brake(motor2);
+            break;
+        
+        default:
+            break;
     }
-    ESP_LOGI(MAIN_TAG, "Output: %d", output);
+    // ESP_LOGI(MAIN_TAG, "Output: %d", output);
     bdc_motor_set_speed(motor1, output);
     bdc_motor_set_speed(motor2, output);
 }
@@ -544,8 +619,9 @@ void app_main(void)
             .kd = 0,
         };
 
-        xTaskCreatePinnedToCore(group_1_task, "Group 1", 4096, NULL, 4, NULL, 0);
-        xTaskCreatePinnedToCore(mode_turn_center_object_PID, "Mode 0", 2048, (void *)&range, 5, NULL, 1);
+        xTaskCreatePinnedToCore(line_sensors_task, "Line sensors", 4096, NULL, 5, NULL, 1);
+        xTaskCreatePinnedToCore(sensors_read_task, "Group 1", 4096, NULL, 5, NULL, 0);
+        xTaskCreatePinnedToCore(mode_turn_center_object_PID, "Mode 0", 4096, (void *)&range, 6, NULL, 1);
 
         motorControlTimer = xTimerCreate("MotorAControlTimer", 
                                     pdMS_TO_TICKS(20), 
