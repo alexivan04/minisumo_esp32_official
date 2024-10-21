@@ -1,3 +1,4 @@
-idf_component_register(SRCS "motor_control.c"
-                    INCLUDE_DIRS "include"
-                    REQUIRES driver soc)
+idf_component_register(SRCS "src/motor_control.c"
+                            "src/bdc_motor.c"
+                       INCLUDE_DIRS "inc/"
+                       PRIV_REQUIRES driver)
