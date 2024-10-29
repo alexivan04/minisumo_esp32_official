@@ -52,7 +52,7 @@ VL53L0X_Error VL53L0X_device_initialise(VL53L0X_Dev_t *pDevice, uint8_t new_i2c_
         		&refSpadCount, &isApertureSpads); // Device Initialization
     if(Status != VL53L0X_ERROR_NONE) return Status;
     
-     Status = VL53L0X_SetLimitCheckEnable(pDevice,
+    Status = VL53L0X_SetLimitCheckEnable(pDevice,
         	VL53L0X_CHECKENABLE_SIGMA_FINAL_RANGE, 1);
     if(Status != VL53L0X_ERROR_NONE) return Status;
 
@@ -81,8 +81,6 @@ VL53L0X_Error VL53L0X_device_initialise(VL53L0X_Dev_t *pDevice, uint8_t new_i2c_
     Status = VL53L0X_SetVcselPulsePeriod(pDevice, 
 	        VL53L0X_VCSEL_PERIOD_FINAL_RANGE, 14);
     if(Status != VL53L0X_ERROR_NONE) return Status;
-
-    // Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING); // Setup in single ranging mode
 
     return Status;
 }
@@ -233,6 +231,6 @@ VL53L0X_Error init_dist_sensor(VL53L0X_Dev_t *pDevice, uint8_t XSHUT, uint8_t ad
     Status = VL53L0X_device_initialise(pDevice, address, range_profile);
     if(Status != VL53L0X_ERROR_NONE) return Status;
 
-    Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+    // Status = VL53L0X_SetDeviceMode(pDevice, VL53L0X_DEVICEMODE_SINGLE_RANGING);
     return Status;
 }

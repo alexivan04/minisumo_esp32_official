@@ -3,6 +3,7 @@
 #include "driver/i2c.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "vl53l0x_esp32.h"
 
 #define ACK_CHECK_EN true
 
@@ -52,7 +53,7 @@ VL53L0X_Error VL53L0X_WriteMulti(VL53L0X_DEV Dev, uint8_t index, uint8_t *pdata,
     }
 
     i2c_master_stop(cmd);
-    esp_err_t ret = i2c_master_cmd_begin(Dev->i2c_port_num, cmd, pdMS_TO_TICKS(1000));
+    esp_err_t ret = i2c_master_cmd_begin(Dev->i2c_port_num, cmd, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
 
     return esp_to_vl53l0x_error(ret);
@@ -90,7 +91,7 @@ VL53L0X_Error VL53L0X_ReadMulti(VL53L0X_DEV Dev, uint8_t index, uint8_t *pdata, 
     ESP_ERROR_CHECK(i2c_master_read(cmd, pdata, count, I2C_MASTER_LAST_NACK));
 
     ESP_ERROR_CHECK(i2c_master_stop(cmd));
-    esp_err_t ret = i2c_master_cmd_begin(Dev->i2c_port_num, cmd,  pdMS_TO_TICKS(1000));
+    esp_err_t ret = i2c_master_cmd_begin(Dev->i2c_port_num, cmd,  pdMS_TO_TICKS(I2C_TIMEOUT_MS));
     i2c_cmd_link_delete(cmd);
 
     return esp_to_vl53l0x_error(ret);

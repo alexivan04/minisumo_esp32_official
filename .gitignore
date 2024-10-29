@@ -3,3 +3,4 @@
 /.vscode
 build
 sdkconfig.old
+components/.DS_Store

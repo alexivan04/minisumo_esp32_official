@@ -24,7 +24,7 @@
 #define I2C_MASTER_NUM         I2C_NUM_0
 #define I2C_MASTER_TX_BUF_DISABLE  0
 #define I2C_MASTER_RX_BUF_DISABLE  0
-#define I2C_TIMEOUT_MS 1000
+#define I2C_TIMEOUT_MS 50
 #define I2C_MASTER_FREQ_HZ  100000 // 100kHz
 
 void i2c_master_init();
