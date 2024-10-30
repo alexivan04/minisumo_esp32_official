@@ -34,7 +34,8 @@
 #define LINE_BACK 23 //BACK
 
 #define MODE_BUTTON 35
-
+#define START_STOP_MODULE 4
+#define USE_START_STOP_MODULE
 #define BLACK_FIELD 1
 
 #define LONG_PRESS_DELAY 1000
@@ -163,6 +164,8 @@ int line_right, line_left, line_back;
 int output_MOTOR_CALLBACK = 0;
 state_t state_MOTOR_CALLBACK = PATROL;
 
+bool is_running = false;
+
 
 //TODO: set lower timing budget
 static int setup()
@@ -227,32 +230,22 @@ static int setup()
     gpio_reset_pin(MODE_BUTTON);
     gpio_set_direction(MODE_BUTTON, GPIO_MODE_INPUT);
 
-    //motors PWM
-    #ifdef ACTIVE_DEBUG
-    ESP_LOGI(MAIN_TAG, "Setting up motors");
-    #endif
+    //start-stop module
+    gpio_reset_pin(START_STOP_MODULE);
+    gpio_set_direction(START_STOP_MODULE, GPIO_MODE_INPUT);
 
-    //i2c
-
+    //dist sensors
     #ifdef ACTIVE_DEBUG
-    //DIST SENSORS
     ESP_LOGI(MAIN_TAG, "XHSUT resetting");
     #endif
+
     init_xshuts(dist_sensors_xshuts, DIST_SENSORS_CNT);
     set_all_xshut_states(dist_sensors_xshuts, true, DIST_SENSORS_CNT);
     vTaskDelay(25 / portTICK_PERIOD_MS);
     set_all_xshut_states(dist_sensors_xshuts, false, DIST_SENSORS_CNT);
     vTaskDelay(25 / portTICK_PERIOD_MS);
 
-    //setup queues
-    // pid_data_queue = xQueueCreate(10, sizeof(int));
-
-    //setup mutex for i2c bus
-    // sensorsMutex = xSemaphoreCreateMutex();
     pidMutex = xSemaphoreCreateMutex();
-    // stateMutex = xSemaphoreCreateMutex();
-    // i2cMutex = xSemaphoreCreateMutex();
-
 
     #ifdef ACTIVE_DEBUG
     ESP_LOGI(MAIN_TAG, "I2C initializing");
@@ -289,6 +282,7 @@ static int setup()
         #endif
     }
 
+    //accelerometer
     #ifdef ACTIVE_ACCEL
     //ACCEL
     #ifdef ACTIVE_DEBUG
@@ -316,7 +310,7 @@ static int setup()
     }
     #endif
 
-    //LINE SENSOR
+    //line sensors
     #ifdef ACTIVE_DEBUG
     ESP_LOGI(MAIN_TAG, "Line sensors initializing");
     #endif
@@ -472,6 +466,13 @@ void sensors_to_PID_task(void *arg)
 {
     while(1)
     {
+        #ifdef USE_START_STOP_MODULE
+        if(!is_running)
+        {
+            vTaskDelete(NULL);
+        }
+        #endif
+
         read_sensors();
 
         if(line_left && line_right)
@@ -523,21 +524,32 @@ void sensors_to_PID_task(void *arg)
     }
 }
 
-void retreat_timer_callback(TimerHandle_t xTimer)
+void retreat_timer_callback(void *arg)
 {
     state_MOTOR_CALLBACK = PATROL;
     retreating = false;
 
 }
-void motor_controller_callback(TimerHandle_t xTimer)
+void motor_controller_callback(void *arg)
 {
+
+    #ifdef USE_START_STOP_MODULE
+    if(gpio_get_level(START_STOP_MODULE))
+    {
+        is_running = false;
+        bdc_motor_brake(motor1);
+        bdc_motor_brake(motor2);
+        esp_timer_stop(motorControlTimer);
+        return;
+    }
+    #endif
+
     if(xSemaphoreTake(pidMutex, pdTICKS_TO_MS(10)) == pdTRUE)
     {
         output_MOTOR_CALLBACK = output;
         state_MOTOR_CALLBACK = state;
         xSemaphoreGive(pidMutex);
     }
-    // else return;
 
     if(retreating)
     {
@@ -593,11 +605,8 @@ void motor_controller_callback(TimerHandle_t xTimer)
     bdc_motor_set_speed(motor1, percent_to_duty_cycle(output_MOTOR_CALLBACK));
     bdc_motor_set_speed(motor2, percent_to_duty_cycle(output_MOTOR_CALLBACK));
 
-    ESP_LOGI("motor timer", "output: %d", output_MOTOR_CALLBACK);
-    // ESP_LOGI("motor timer", "state: %d", state_MOTOR_CALLBACK);
-
     #ifdef ACTIVE_DEBUG
-    // ESP_LOGI(MAIN_TAG, "timer running");
+    ESP_LOGI("motor timer", "output: %d", output_MOTOR_CALLBACK);
     #endif
 }
 
@@ -615,14 +624,28 @@ void blink_led(int cnt, int delay)
 void app_main(void) 
 {
     int setup_status = setup();
+
+    //if setup ok, blink 3 times
     if(setup_status == 1)
         blink_led(3, 150);
     else
         gpio_set_level(ONBOARD_LED, 1);
 
     mode_select();
+
     #ifdef ACTIVE_DEBUG
     ESP_LOGI(MAIN_TAG, "Mode %d selected", mode);
+    #endif
+
+    #ifdef USE_START_STOP_MODULE
+    while(1)
+    {
+        if(gpio_get_level(START_STOP_MODULE))
+        {
+            is_running = true;
+            break;
+        }
+    }
     #endif
     
     //PATROL1 WITH PID
