@@ -32,23 +32,24 @@
 #define LINE_RIGHT 15 //RIGHT
 #define LINE_LEFT 14 //LEFT 
 #define LINE_BACK 23 //BACK
+#define WING_MOTOR 16
 
 #define MODE_BUTTON 35
 #define START_STOP_MODULE 4
-#define USE_START_STOP_MODULE
 #define BLACK_FIELD 1
 
 #define LONG_PRESS_DELAY 1000
 #define DOUBLE_PRESS_DELAY 3000
-//#define WING_MOTOR - 6th pin on the right
 // #define SINGLE_RANGING
 #define CONTINUOUS_RANGING
-#define MAX_RANGE 500
+#define MAX_RANGE 600
 #define MIN_RANGE 10
 #define CENTERED_TRESHOLD 20
 
 #define MOTOR_CONTROL_TIMER_PERIOD 15
 #define SENSOR_READING_DELAY 10
+#define RETREAT_DELAY 100
+#define WING_MOTOR_DELAY 25
 
 #define BDC_MCPWM_TIMER_RESOLUTION_HZ 1000000 // 1MHz, 1 tick = 0.1us
 #define BDC_MCPWM_FREQ_HZ             25000    // 25KHz PWM
@@ -75,21 +76,19 @@ typedef enum
 } state_t;
 
 // #define ACTIVE_ACCEL
-#define ACTIVE_DEBUG
+// #define ACTIVE_DEBUG
 // #define SENSORS_DEBUG
 // #define ACTIVE_DEBUG_DISTANCE_1
 // #define ACTIVE_DEBUG_DISTANCE_2
 // #define ACTIVE_DEBUG_DISTANCE_3
 // #define ACTIVE_DEBUG_LINE
-#define SAFE_MODE
+// #define SAFE_MODE
+// #define USE_START_STOP_MODULE
 
-
-// SemaphoreHandle_t i2cMutex;
-
-esp_timer_handle_t motorControlTimer;
-esp_timer_handle_t sensorReadingTimer;
-esp_timer_handle_t retreatTimer;
-// esp_timer_handle_t pid_timer;
+esp_timer_handle_t motorControlTimer = NULL;
+esp_timer_handle_t sensorReadingTimer = NULL;
+esp_timer_handle_t retreatTimer = NULL;
+esp_timer_handle_t wingMotorTimer = NULL;
 
 static mma845x_sensor_t* accel;
 int mode = 0;
@@ -133,7 +132,7 @@ enum AttackStates
     ATTACK2 = 2
 };
 
-// SENSOR ORDER(ROBOT VIEW): FR F FL R90 R45 L90 L45
+// SENSOR ORDER(ROBOT VIEW): FR F FL R90 R45 L45 L90
 VL53L0X_Error status = VL53L0X_ERROR_NONE;
 uint8_t dist_sensors_xshuts[DIST_SENSORS_CNT] = {13, 12, 27, 33, 32, 25, 26};
 uint8_t dist_sensors_addrs[DIST_SENSORS_CNT] = {0x30, 0x32, 0x34, 0x36, 0x38, 0x40, 0x42};
@@ -145,7 +144,6 @@ SemaphoreHandle_t stateMutex;
 int output;
 int direction = 0;
 state_t state = PATROL;
-bool retreating = false;
 
 double max_integral = 1000000;
 double kp = 0.2;
@@ -164,7 +162,9 @@ int line_right, line_left, line_back;
 int output_MOTOR_CALLBACK = 0;
 state_t state_MOTOR_CALLBACK = PATROL;
 
+bool retreating = false;
 bool is_running = false;
+bool is_wing_running = true;
 
 
 //TODO: set lower timing budget
@@ -233,6 +233,10 @@ static int setup()
     //start-stop module
     gpio_reset_pin(START_STOP_MODULE);
     gpio_set_direction(START_STOP_MODULE, GPIO_MODE_INPUT);
+
+    //wing?
+    gpio_reset_pin(WING_MOTOR);
+    gpio_set_direction(WING_MOTOR, GPIO_MODE_OUTPUT);
 
     //dist sensors
     #ifdef ACTIVE_DEBUG
@@ -406,18 +410,14 @@ void read_sensors()
         // status = VL53L0X_StopMeasurement(&dist_sensors[i]);
 
         dist_sensor_data[i] = measurement.RangeMilliMeter;
-        // #ifdef SENSORS_DEBUG
-        // #endif
         dist_sensor_data[i] = (dist_sensor_data[i] > MAX_RANGE) ? MAX_RANGE : dist_sensor_data[i];
-        ESP_LOGI("sensor1_task", "Sensor %d: %d", i, dist_sensor_data[i]);
+        
+        // ESP_LOGI("sensor1_task", "Sensor %d: %d", i, dist_sensor_data[i]);
     }
 
-    // #ifdef SENSORS_DEBUG
-    ESP_LOGI("sensor1_task", "Sensor %d: %d", 6, dist_sensor_data[6]);
-    // #endif
-    
-
-
+    ESP_LOGI("sensor1_task", "sensor %d: %d", 3, dist_sensor_data[3]);
+    // ESP_LOGI("sensor1_task", "sensor %d: %d", 4, dist_sensor_data[4]);
+    // ESP_LOGI("sensor1_task", "sensor %d: %d", 5, dist_sensor_data[5]);
 
     //read line sensors
     #ifdef BLACK_FIELD
@@ -487,7 +487,7 @@ void sensors_to_PID_task(void *arg)
             output_PID = 85;
         }
 
-        else if(dist_sensor_data[1] < MAX_RANGE)
+        else if(dist_sensor_data[1] < MAX_RANGE || line_back)
         {
             state_PID = ATTACK;
             #ifdef SAFE_MODE
@@ -497,13 +497,14 @@ void sensors_to_PID_task(void *arg)
             #endif
         }
 
-        else if(dist_sensor_data[0] < dist_sensor_data[2] || dist_sensor_data[5] < MAX_RANGE || dist_sensor_data[6] < MAX_RANGE)
+        else if(dist_sensor_data[0] < dist_sensor_data[2] || dist_sensor_data[3] < MAX_RANGE || dist_sensor_data[4] < MAX_RANGE)
         {
             state_PID = FOUND;
             output_PID = -70;
         }
 
-        else if(dist_sensor_data[0] > dist_sensor_data[2] || dist_sensor_data[3] < MAX_RANGE || dist_sensor_data[4] < MAX_RANGE)
+        else if(dist_sensor_data[0] > dist_sensor_data[2] || dist_sensor_data[5] < MAX_RANGE || dist_sensor_data[6] < MAX_RANGE)
+        
         {
             state_PID = FOUND;
             output_PID = 70;
@@ -530,11 +531,25 @@ void retreat_timer_callback(void *arg)
     retreating = false;
 
 }
+
+void wing_motor_callback(void *arg)
+{
+    gpio_set_level(WING_MOTOR, 0);
+    is_wing_running = false;
+}
+
 void motor_controller_callback(void *arg)
 {
+    // only run once at start of game, 
+    if(is_wing_running && wingMotorTimer == NULL)
+    {
+        esp_timer_stop(wingMotorTimer);
+        esp_timer_start_once(wingMotorTimer, WING_MOTOR_DELAY * 1000);
+
+    }
 
     #ifdef USE_START_STOP_MODULE
-    if(gpio_get_level(START_STOP_MODULE))
+    if(!gpio_get_level(START_STOP_MODULE))
     {
         is_running = false;
         bdc_motor_brake(motor1);
@@ -595,7 +610,7 @@ void motor_controller_callback(void *arg)
                 {
                     retreating = true;
                     esp_timer_stop(retreatTimer);
-                    esp_timer_start_once(retreatTimer, 100 * 1000);
+                    esp_timer_start_once(retreatTimer, RETREAT_DELAY * 1000);
                 }
                 break;
         }
@@ -631,7 +646,8 @@ void app_main(void)
     else
         gpio_set_level(ONBOARD_LED, 1);
 
-    mode_select();
+    // mode_select();
+    mode = 1;
 
     #ifdef ACTIVE_DEBUG
     ESP_LOGI(MAIN_TAG, "Mode %d selected", mode);
@@ -645,6 +661,7 @@ void app_main(void)
             is_running = true;
             break;
         }
+        ESP_LOGI("start stop", "%d", gpio_get_level(START_STOP_MODULE));
     }
     #endif
     
@@ -668,5 +685,11 @@ void app_main(void)
             .name = "retreat_timer"
         };
         esp_timer_create(&retreatTimerArgs, &retreatTimer);
+
+        esp_timer_create_args_t wingMotorTimerArgs = {
+            .callback = &wing_motor_callback,
+            .name = "wing_motor_timer"
+        };
+        esp_timer_create(&wingMotorTimerArgs, &wingMotorTimer);
     }
 }
